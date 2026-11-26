@@ -164,3 +164,7 @@ The third layer is a highlight that follows the pointer, plus a rim light that t
 The background colours come from your media. Four blurred blobs behind the interface take the
 dominant colours of whatever is on screen, and opening an item in the viewer tints the whole
 window to match it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
