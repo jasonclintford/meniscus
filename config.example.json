@@ -1,0 +1,27 @@
+{
+  "extractor": {
+    "base-directory": "~/Downloads/gdl",
+    "archive": "~/Downloads/gdl/.archive.sqlite3",
+    "cookies": ["chrome"],
+    "ytdl": {
+      "enabled": true,
+      "module": "yt_dlp"
+    },
+    "redgifs": {
+      "format": ["hd", "sd", "gif"]
+    },
+    "postprocessors": [
+      {
+        "name": "metadata",
+        "mode": "json",
+        "event": "after",
+        "directory": ".meta"
+      }
+    ]
+  },
+  "downloader": {
+    "ytdl": {
+      "module": "yt_dlp"
+    }
+  }
+}

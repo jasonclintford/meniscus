@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Meniscus
+Comment=Downloader and media library for gallery-dl and yt-dlp
+Exec=meniscus
+Icon=meniscus
+Terminal=false
+Categories=Network;AudioVideo;Graphics;
+StartupWMClass=Meniscus

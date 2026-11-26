@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Meniscus launcher: starts the background server once, then opens the app window.
+#   meniscus          open (start server if needed)
+#   meniscus --stop   stop the background server
+#   meniscus --serve  run the server in the foreground (for debugging)
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PORT="${MENISCUS_PORT:-47821}"
+URL="http://127.0.0.1:${PORT}/"
+if [[ -n "${MENISCUS_PYTHON:-}" ]]; then PY="$MENISCUS_PYTHON"
+elif [[ -x "$HERE/.venv/bin/python" ]]; then PY="$HERE/.venv/bin/python"
+else PY="$(command -v python3)"; fi
+LOG="${XDG_CACHE_HOME:-$HOME/.cache}/meniscus/server.log"
+PIDFILE="${XDG_CACHE_HOME:-$HOME/.cache}/meniscus/server.pid"
+mkdir -p "$(dirname "$LOG")"
+
+up() { curl -fs -o /dev/null --max-time 1 "${URL}api/state"; }
+
+case "${1:-}" in
+  --stop)
+    if [[ -f "$PIDFILE" ]] && kill "$(cat "$PIDFILE")" 2>/dev/null; then echo "Meniscus stopped."; else echo "Meniscus was not running."; fi
+    rm -f "$PIDFILE"; exit 0 ;;
+  --serve)
+    exec "$PY" "$HERE/server.py" ;;
+esac
+
+if ! up; then
+  nohup "$PY" "$HERE/server.py" >>"$LOG" 2>&1 &
+  echo $! >"$PIDFILE"
+  for _ in $(seq 1 50); do up && break; sleep 0.1; done
+fi
+
+# A chromeless window. Chromium-family browsers also render the refractive glass edges.
+for b in google-chrome chromium chromium-browser brave-browser microsoft-edge; do
+  if command -v "$b" >/dev/null; then
+    exec "$b" --app="$URL" --class=Meniscus --name=Meniscus >/dev/null 2>&1
+  fi
+done
+exec xdg-open "$URL"
