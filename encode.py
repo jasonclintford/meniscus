@@ -42,7 +42,7 @@ class EncodeError(Exception):
 def probe(ffprobe: str, path: str) -> dict:
     out = subprocess.run(
         [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-        capture_output=True, text=True, timeout=60)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     if out.returncode != 0:
         raise EncodeError(out.stderr.strip() or "ffprobe failed")
     j = json.loads(out.stdout or "{}")
@@ -128,7 +128,8 @@ def _vf(pl: dict) -> str:
 
 def _run(cmd: list[str], duration: float, lo: float, hi: float,
          on_progress: Callable[[float], None], on_proc: Callable[[subprocess.Popen], None]) -> None:
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                         errors="replace", start_new_session=True)
     on_proc(p)
     err_tail: list[str] = []
 

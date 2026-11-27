@@ -470,6 +470,12 @@ function upsertJob(j) {
   const err = li.querySelector('.vial-err');
   const showErr = j.error && (j.status === 'error' || (j.status === 'done' && !j.files && !j.skipped));
   err.hidden = !showErr; err.textContent = showErr ? j.error.replace(/^\[[\w.-]+\]\[\w+\]\s*/, '') : '';
+  li.querySelector('.vial-login')?.remove();
+  if (showErr && j.kind !== 'encode' && NEEDS_LOGIN.test(j.error)) {
+    const host = (() => { try { return new URL(j.url).hostname.replace(/^www\./, ''); } catch { return j.site; } })();
+    err.after(el('button', { class: 'act vial-login', title: 'Opens a window to sign in. Run the download again afterwards.',
+      onclick: () => startLogin(j.url) }, `Sign in to ${host}`));
+  }
   const th = li.querySelector('.vial-thumbs');
   const want = (j.items || []).slice(-7);
   if (th.dataset.sig !== want.join(',')) {
@@ -759,6 +765,35 @@ $('#s-open-config').addEventListener('click', () => api.post('/api/open-config',
 $('#s-open-base').addEventListener('click', () => api.post('/api/open-config', { what: 'base' }));
 $('#s-rescan').addEventListener('click', () => api.post('/api/rescan'));
 
+/* --------------------------------------------------------- site logins ---- */
+const NEEDS_LOGIN = /\b(401|403)\b|unauthori[sz]ed|forbidden|log ?in|logged in|sign in|cookies|private|authenticat/i;
+let loginErr = '';
+function renderLogin(st) {
+  if (!st || st.error === undefined) return;
+  const sites = st.sites || [];
+  const bits = [];
+  if (st.active) bits.push('Sign-in window open. Log in there, then close it.');
+  bits.push(sites.length ? `Saved cookies for ${sites.join(', ')}.` : 'No site logins yet.');
+  if (!st.browser) bits.push('Signing in needs Chrome, Edge or Brave.');
+  if (loginErr || st.error) bits.push(loginErr || st.error);
+  $('#s-login-status').textContent = bits.join(' ');
+  $('#s-login-forget').hidden = !sites.length || st.active;
+}
+async function startLogin(url) {
+  const r = await api.post('/api/login', { url });
+  loginErr = r.error || '';
+  renderLogin(r.error ? await api.get('/api/login') : r);
+  if (r.error) alert(r.error);
+}
+$('#s-login-go').addEventListener('click', () => startLogin($('#s-login-site').value));
+$('#s-login-site').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); startLogin(e.target.value); } });
+$('#s-login-forget').addEventListener('click', async () => {
+  const r = await api.post('/api/login/forget');
+  loginErr = r.error || '';
+  renderLogin(r.error ? await api.get('/api/login') : r);
+});
+$('#btn-settings').addEventListener('click', () => { loginErr = ''; api.get('/api/login').then(renderLogin); });
+
 /* ------------------------------------------------------------ keyboard ---- */
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
@@ -792,6 +827,7 @@ function connect() {
   es.addEventListener('job_removed', (e) => { const { id } = JSON.parse(e.data); S.jobs.delete(id); vials.querySelector(`[data-job="${id}"]`)?.remove(); updateCurrentsHead(); });
   es.addEventListener('jobs_cleared', () => { for (const [id, j] of S.jobs) if (!['running', 'queued'].includes(j.status)) { S.jobs.delete(id); vials.querySelector(`[data-job="${id}"]`)?.remove(); } updateCurrentsHead(); });
   es.addEventListener('clip', (e) => droplet(JSON.parse(e.data)));
+  es.addEventListener('login', (e) => renderLogin(JSON.parse(e.data)));
   es.addEventListener('export', (e) => { if (S.items[S.vIdx]?.id === JSON.parse(e.data).item) refreshExports(); });
   es.addEventListener('library', onLibraryChange);
   es.addEventListener('settings', (e) => { S.settings = JSON.parse(e.data); renderClipStatus(); });

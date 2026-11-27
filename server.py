@@ -35,35 +35,87 @@ except ImportError:
     gdl_extractor = None
 
 import encode as ENC
+import login as LOGIN
+
+WINDOWS = sys.platform == "win32"
+FROZEN = getattr(sys, "frozen", False)  # the packaged Windows build (PyInstaller)
+if WINDOWS:
+    import winplat
 
 # ---------------------------------------------------------------- paths ----
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 BIN = Path(sys.executable).parent
-XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-XDG_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-XDG_DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
-APP_CONFIG = XDG_CONFIG / "meniscus"
-APP_DATA = XDG_DATA / "meniscus"
-THUMBS = XDG_CACHE / "meniscus" / "thumbs"
-GDL_CONFIG = XDG_CONFIG / "gallery-dl" / "config.json"
-for d in (APP_CONFIG, APP_DATA, THUMBS):
+
+
+def portable_home() -> Path | None:
+    """MENISCUS_HOME, or a data folder beside the packaged exe. None means the usual XDG paths."""
+    if os.environ.get("MENISCUS_HOME"):
+        return Path(os.path.expanduser(os.environ["MENISCUS_HOME"]))
+    if not FROZEN:
+        return None
+    home = Path(sys.executable).resolve().parent / "data"
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        (home / ".write-test").write_text("")
+        (home / ".write-test").unlink()
+        return home
+    except OSError:  # unpacked somewhere read-only, such as Program Files
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Meniscus"
+
+
+HOME = portable_home()
+if HOME:
+    APP_CONFIG = HOME / "config"
+    APP_DATA = HOME / "library"
+    THUMBS = HOME / "cache" / "thumbs"
+    GDL_CONFIG = HOME / "gallery-dl" / "config.json"
+else:
+    XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    XDG_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    XDG_DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    APP_CONFIG = XDG_CONFIG / "meniscus"
+    APP_DATA = XDG_DATA / "meniscus"
+    THUMBS = XDG_CACHE / "meniscus" / "thumbs"
+    GDL_CONFIG = XDG_CONFIG / "gallery-dl" / "config.json"
+for d in (APP_CONFIG, APP_DATA, THUMBS, GDL_CONFIG.parent):
     d.mkdir(parents=True, exist_ok=True)
+
+if HOME and not GDL_CONFIG.exists():  # first run of a portable copy: start from the example config
+    try:
+        _cfg = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _cfg = {}
+    if WINDOWS:  # Chrome's app-bound encryption stops gallery-dl and yt-dlp reading its cookies
+        _cfg.get("extractor", {}).pop("cookies", None)
+    GDL_CONFIG.write_text(json.dumps(_cfg, indent=2), encoding="utf-8")
+
+# gallery-dl only looks in %APPDATA% on Windows, so hand it the file Meniscus reads.
+GDL_CONFIG_ARGS = ["--config-ignore", "--config", str(GDL_CONFIG)] if (HOME or WINDOWS) else []
 
 
 def which(name: str) -> str | None:
     return shutil.which(name, path=str(BIN)) or shutil.which(name)
 
 
-GALLERY_DL = which("gallery-dl")
-YT_DLP = which("yt-dlp")
+def tool_cmd(name: str) -> list[str] | None:
+    """How to start gallery-dl or yt-dlp. The packaged build runs them through its own engine exe."""
+    if FROZEN:
+        engine = which("meniscus-engine")
+        return [engine, name] if engine else None
+    exe = which(name)
+    return [exe] if exe else None
+
+
+GALLERY_DL = tool_cmd("gallery-dl")
+YT_DLP = tool_cmd("yt-dlp")
 FFMPEG = which("ffmpeg")
 FFPROBE = which("ffprobe")
 
 
 def read_gdl_config() -> dict:
     try:
-        return json.loads(GDL_CONFIG.read_text())
+        return json.loads(GDL_CONFIG.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -90,7 +142,7 @@ DEFAULT_SETTINGS = {"clipboard": True, "auto_absorb": False, "concurrency": 2,
 
 def load_settings() -> dict:
     try:
-        return {**DEFAULT_SETTINGS, **json.loads(SETTINGS_PATH.read_text())}
+        return {**DEFAULT_SETTINGS, **json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))}
     except (OSError, ValueError):
         return dict(DEFAULT_SETTINGS)
 
@@ -99,7 +151,7 @@ SETTINGS = load_settings()
 
 
 def save_settings() -> None:
-    SETTINGS_PATH.write_text(json.dumps(SETTINGS, indent=2))
+    SETTINGS_PATH.write_text(json.dumps(SETTINGS, indent=2), encoding="utf-8")
 
 
 # ------------------------------------------------------------ event bus ----
@@ -130,6 +182,7 @@ class Bus:
 
 
 BUS = Bus()
+LOGINS = LOGIN.Logins(HOME or APP_DATA, on_change=lambda status: BUS.publish("login", status))
 
 # ------------------------------------------------------------- database ----
 DB_PATH = APP_DATA / "library.sqlite3"
@@ -190,7 +243,7 @@ def sidecar_for(path: Path) -> dict:
                  path.with_suffix(".info.json")):
         if cand.is_file():
             try:
-                return json.loads(cand.read_text(errors="replace"))
+                return json.loads(cand.read_text(encoding="utf-8", errors="replace"))
             except (OSError, ValueError):
                 return {}
     return {}
@@ -249,7 +302,7 @@ def describe(path: Path) -> dict:
     st = path.stat()
     ext = path.suffix.lower()
     return {
-        "path": str(path), "rel": str(rel), "site": site.lower(), "creator": creator[:120],
+        "path": str(path), "rel": rel.as_posix(), "site": site.lower(), "creator": creator[:120],
         "kind": kind_of(ext), "ext": ext.lstrip("."), "size": st.st_size, "mtime": st.st_mtime,
         "w": w if isinstance(w, int) else None, "h": h if isinstance(h, int) else None,
         "duration": meta.get("duration") if isinstance(meta.get("duration"), (int, float)) else None,
@@ -339,7 +392,7 @@ def probe_video(path: str) -> tuple:
         out = subprocess.run(
             [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
              "stream=width,height:format=duration", "-of", "json", path],
-            capture_output=True, text=True, timeout=20).stdout
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20).stdout
         j = json.loads(out or "{}")
         s = (j.get("streams") or [{}])[0]
         return s.get("width"), s.get("height"), float(j.get("format", {}).get("duration") or 0) or None
@@ -454,7 +507,23 @@ def ytdlp_cookie_args() -> list[str]:
     return []
 
 
-def build_cmd(j: dict) -> list[str]:
+def job_cookie_file(job_id: str) -> Path | None:
+    """A private copy of the sign-in window's cookies for one download.
+
+    Only used when the gallery-dl config doesn't name its own cookie source. Each job gets a
+    copy because gallery-dl and yt-dlp both write updated cookies back to the file they're given.
+    """
+    if read_gdl_config().get("extractor", {}).get("cookies") or not LOGINS.cookies_txt.exists():
+        return None
+    dst = APP_DATA / f"cookies-{job_id}.txt"
+    try:
+        shutil.copyfile(LOGINS.cookies_txt, dst)
+    except OSError:
+        return None
+    return dst
+
+
+def build_cmd(j: dict, cookie_file: Path | None = None) -> list[str]:
     if j["mode"] == "video" and YT_DLP:
         out = str(BASE / "yt-dlp" / "%(extractor)s" / "%(uploader,channel,uploader_id|unknown)s"
                   / "%(title).120B [%(id)s].%(ext)s")
@@ -467,11 +536,13 @@ def build_cmd(j: dict) -> list[str]:
         if preset in ENC.PRESETS:
             cap = {"discord20": ",res:720", "discord50": ",res:1080"}.get(preset, "")
             prefer = ["-S", f"vcodec:h264,acodec:aac{cap}", "--merge-output-format", "mp4"]
-        return [YT_DLP, "--newline", "--progress", "--no-colors", *ytdlp_cookie_args(), *prefer,
+        cookies = ["--cookies", str(cookie_file)] if cookie_file else ytdlp_cookie_args()
+        return [*YT_DLP, "--newline", "--progress", "--no-colors", *cookies, *prefer,
                 "--write-info-json", "-o", out, "-o", f"infojson:{meta}",
                 "--progress-template", "download:MNSC %(progress._percent_str)s|%(progress._speed_str)s",
                 "--print", "after_move:filepath", j["url"]]
-    return [GALLERY_DL or "gallery-dl", "-o", "downloader.progress=0", j["url"]]
+    cookies = ["--cookies", str(cookie_file)] if cookie_file else []
+    return [*(GALLERY_DL or ["gallery-dl"]), *GDL_CONFIG_ARGS, *cookies, "-o", "downloader.progress=0", j["url"]]
 
 
 def run_job(job_id: str) -> None:
@@ -480,8 +551,18 @@ def run_job(job_id: str) -> None:
         return
     j.update(status="running", started=time.time(), error="", progress=None)
     emit_job(j)
-    cmd = build_cmd(j)
-    env = {**os.environ, "PYTHONUNBUFFERED": "1", "COLUMNS": "200"}
+    cookie_file = job_cookie_file(job_id)
+    try:
+        _run_job(j, job_id, build_cmd(j, cookie_file))
+    finally:
+        if cookie_file:
+            cookie_file.unlink(missing_ok=True)
+
+
+def _run_job(j: dict, job_id: str, cmd: list[str]) -> None:
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "COLUMNS": "200", "PYTHONIOENCODING": "utf-8"}
+    if FFMPEG:  # yt-dlp merges formats with ffmpeg; make sure it finds the same one
+        env["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + env.get("PATH", "")
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(BASE),
                              env=env, start_new_session=True)
@@ -526,7 +607,7 @@ def run_job(job_id: str) -> None:
     t.start()
     fresh: list[int] = []  # items this run actually downloaded (not already-held skips)
     for raw in p.stdout:
-        line = raw.decode(errors="replace").rstrip("\n")
+        line = raw.decode(errors="replace").rstrip("\r\n")  # Windows children end lines with \r\n
         if not line.strip():
             continue
         if line.startswith("MNSC "):
@@ -597,6 +678,13 @@ def job_worker() -> None:
             JOB_Q.task_done()
 
 
+def kill_tree(p: subprocess.Popen, hard: bool) -> None:
+    if WINDOWS:  # no process groups or SIGTERM; end the whole tree (yt-dlp may have started ffmpeg)
+        winplat.kill_tree(p.pid)
+    else:
+        os.killpg(p.pid, signal.SIGKILL if hard else signal.SIGTERM)
+
+
 def cancel_job(job_id: str) -> None:
     j = JOBS.get(job_id)
     if not j:
@@ -609,7 +697,7 @@ def cancel_job(job_id: str) -> None:
         if p:
             p._cancelled = True  # type: ignore[attr-defined]  # read by encode._run
             try:
-                os.killpg(p.pid, signal.SIGTERM)
+                kill_tree(p, hard=False)
             except OSError:
                 pass
 
@@ -617,7 +705,7 @@ def cancel_job(job_id: str) -> None:
                 time.sleep(3)
                 if proc.poll() is None:
                     try:
-                        os.killpg(proc.pid, signal.SIGKILL)
+                        kill_tree(proc, hard=True)
                     except OSError:
                         pass
             threading.Thread(target=hard_kill, daemon=True).start()
@@ -639,7 +727,7 @@ def enqueue_encode(item_id: int, preset: str) -> dict | None:
     it = rows("SELECT id, rel FROM items WHERE id=?", (item_id,))
     if not it or preset not in ENC.PRESETS:
         return None
-    j = {"id": uuid.uuid4().hex[:10], "kind": "encode", "url": it[0]["rel"].split("/")[-1], "mode": preset,
+    j = {"id": uuid.uuid4().hex[:10], "kind": "encode", "url": Path(it[0]["rel"]).name, "mode": preset,
          "site": "→ " + ENC.PRESETS[preset]["label"].split(" (")[0].lower(), "supported": True,
          "status": "queued", "created": time.time(), "started": None, "finished": None, "files": 0,
          "skipped": 0, "bytes": 0, "progress": None, "speed": "", "error": "", "items": [item_id],
@@ -722,8 +810,25 @@ def exports_for(item_id) -> list[dict]:
     return out
 
 
+def open_path(target: str) -> None:
+    if WINDOWS:
+        return winplat.open_path(target)
+    subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+def trash_file(path: str) -> str:
+    """Move a file to the desktop trash. Returns an error message, or '' on success."""
+    if WINDOWS:
+        return winplat.trash(path)
+    r = subprocess.run(["gio", "trash", path], capture_output=True, text=True)
+    return "" if r.returncode == 0 else (r.stderr.strip() or "could not move to trash")
+
+
 def reveal(path: str) -> None:
     """Open the file manager with the file selected (FileManager1 D-Bus), else just the folder."""
+    if WINDOWS:
+        return winplat.reveal(path)
     uri = Path(path).as_uri()
     r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.FileManager1",
                         "--object-path", "/org/freedesktop/FileManager1",
@@ -736,6 +841,8 @@ def reveal(path: str) -> None:
 
 def copy_file_to_clipboard(path: str) -> bool:
     """Put the file on the clipboard as a file (text/uri-list), the way file managers do."""
+    if WINDOWS:
+        return winplat.copy_file_to_clipboard(path)
     uri = Path(path).as_uri() + "\r\n"
     if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
         cmd = ["wl-copy", "--type", "text/uri-list"]
@@ -758,6 +865,11 @@ def load_job_history() -> None:
 
 # ------------------------------------------------------------- clipboard ----
 def read_clipboard() -> str:
+    if WINDOWS:
+        try:
+            return winplat.read_clipboard()
+        except OSError:
+            return ""
     cmds = []
     if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-paste"):
         cmds.append(["wl-paste", "--no-newline", "--type", "text"])
@@ -865,10 +977,11 @@ def facets() -> dict:
 
 def tool_versions() -> dict:
     out = {}
-    for name, exe, flag in (("gallery-dl", GALLERY_DL, "--version"), ("yt-dlp", YT_DLP, "--version"),
-                            ("ffmpeg", FFMPEG, "-version")):
+    for name, cmd, flag in (("gallery-dl", GALLERY_DL, "--version"), ("yt-dlp", YT_DLP, "--version"),
+                            ("ffmpeg", FFMPEG and [FFMPEG], "-version")):
         try:
-            out[name] = subprocess.run([exe, flag], capture_output=True, text=True, timeout=10).stdout.splitlines()[0][:60] if exe else None
+            out[name] = subprocess.run([*cmd, flag], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       timeout=20).stdout.splitlines()[0][:60] if cmd else None
         except (subprocess.SubprocessError, OSError, IndexError):
             out[name] = None
     return out
@@ -883,6 +996,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # quiet
         pass
+
+    def handle(self):
+        try:
+            super().handle()
+        except ConnectionError:  # the window closed while a keep-alive connection was idle
+            pass
 
     # helpers
     def send_json(self, obj, status=200):
@@ -945,7 +1064,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:  # includes Windows' ConnectionAbortedError when a video seek drops the request
             pass
         finally:
             f.close()
@@ -973,6 +1092,8 @@ class Handler(BaseHTTPRequestHandler):
                                                int(qs.get("offset", 0)), min(int(qs.get("limit", 120)), 500)))
         if path == "/api/facets":
             return self.send_json(facets())
+        if path == "/api/login":
+            return self.send_json(LOGINS.status())
         m = re.match(r"^/api/items/(\d+)$", path)
         if m:
             it = self.item(m.group(1))
@@ -1005,6 +1126,11 @@ class Handler(BaseHTTPRequestHandler):
             mode = b.get("mode", "auto") if b.get("mode") in ("auto", "video") else "auto"
             jobs = [enqueue(u.rstrip(".,;)]}"), mode) for u in dict.fromkeys(urls)]
             return self.send_json({"jobs": [job_public(j) for j in jobs]})
+        if path in ("/api/login", "/api/login/forget"):
+            try:
+                return self.send_json(LOGINS.open(b.get("url", "")) if path == "/api/login" else LOGINS.forget())
+            except (RuntimeError, ValueError, OSError) as e:
+                return self.send_json({"error": str(e)}, 400)
         if path == "/api/classify":
             return self.send_json([{"url": u, **classify(u)} for u in (b.get("urls") or [])[:50]])
         m = re.match(r"^/api/jobs/(\w+)/(cancel|retry|remove)$", path)
@@ -1042,9 +1168,10 @@ class Handler(BaseHTTPRequestHandler):
                 reveal(e[0]["path"])
             elif act == "copy":
                 if not copy_file_to_clipboard(e[0]["path"]):
-                    return self.send_json({"error": "no clipboard tool (xclip / wl-copy)"}, 500)
+                    msg = "could not open the clipboard" if WINDOWS else "no clipboard tool (xclip / wl-copy)"
+                    return self.send_json({"error": msg}, 500)
             elif act == "delete":
-                subprocess.run(["gio", "trash", e[0]["path"]], capture_output=True)
+                trash_file(e[0]["path"])
                 db("DELETE FROM exports WHERE id=?", (eid,))
             return self.send_json({"ok": True})
         m = re.match(r"^/api/items/(\d+)/(fav|reveal|open|trash|encode)$", path)
@@ -1060,15 +1187,19 @@ class Handler(BaseHTTPRequestHandler):
                 v = 0 if it["fav"] else 1
                 db("UPDATE items SET fav=? WHERE id=?", (v, iid))
                 return self.send_json({"fav": v})
-            if act in ("reveal", "open"):
-                target = it["path"] if act == "open" else str(Path(it["path"]).parent)
-                subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 start_new_session=True)
+            if act == "open":
+                open_path(it["path"])
+                return self.send_json({"ok": True})
+            if act == "reveal":
+                if WINDOWS:
+                    reveal(it["path"])  # Explorer can select the file, so do that
+                else:
+                    open_path(str(Path(it["path"]).parent))
                 return self.send_json({"ok": True})
             if act == "trash":
-                r = subprocess.run(["gio", "trash", it["path"]], capture_output=True, text=True)
-                if r.returncode != 0 and Path(it["path"]).exists():
-                    return self.send_json({"error": r.stderr.strip() or "could not move to trash"}, 500)
+                err = trash_file(it["path"])
+                if err and Path(it["path"]).exists():
+                    return self.send_json({"error": err}, 500)
                 db("DELETE FROM items WHERE id=?", (iid,))
                 (THUMBS / f"{iid}.webp").unlink(missing_ok=True)
                 BUS.publish("library", {"removed": 1, "id": int(iid)})
@@ -1092,8 +1223,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": True})
         if path == "/api/open-config":
             target = GDL_CONFIG if b.get("what") == "config" else BASE
-            subprocess.Popen(["xdg-open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
+            open_path(str(target))
             return self.send_json({"ok": True})
         self.send_error(404)
 
@@ -1136,6 +1266,8 @@ def main() -> None:
     global VERSIONS
     port = int(os.environ.get("MENISCUS_PORT", "47821"))
     load_job_history()
+    for stale in APP_DATA.glob("cookies-*.txt"):  # per-download cookie copies left by a crash
+        stale.unlink(missing_ok=True)
     ensure_workers()
     for _ in range(2):
         threading.Thread(target=thumb_worker, daemon=True).start()

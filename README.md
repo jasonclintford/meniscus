@@ -5,7 +5,8 @@ Meniscus is a desktop front end for [gallery-dl](https://github.com/mikf/gallery
 you download shows up in a thumbnailed, searchable library in the same window.
 
 It is a small Python server bound to 127.0.0.1 with a plain HTML, CSS and JavaScript interface,
-opened as a borderless Chrome or Chromium window. It only runs on Linux for now.
+opened as a borderless Chrome or Chromium window. It runs on Linux and Windows (see
+[Windows](#windows)).
 
 ## Requirements
 
@@ -55,6 +56,32 @@ meniscus --serve    # run the server in the foreground, for debugging
 The server listens on `http://127.0.0.1:47821`. Set `MENISCUS_PORT` to change it. The log is at
 `~/.cache/meniscus/server.log`.
 
+## Windows
+
+The portable build is a folder with `Meniscus.exe` that needs no Python. Build it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build-windows.ps1
+```
+
+This writes `dist\Meniscus` and `dist\Meniscus-windows-portable.zip`. Add `-WithFfmpeg` to copy
+ffmpeg and ffprobe from your PATH into the folder (about 450 MB with the full ffmpeg build).
+Without it, Meniscus uses whatever ffmpeg is on the PATH.
+
+The portable build keeps its config, library, thumbnails and log in a `data` folder next to the exe,
+and opens in a Chrome, Edge or Brave app window. Closing the window lets running downloads finish,
+then Meniscus exits. See `packaging\README-windows.txt` for details.
+
+On Windows the desktop pieces use native APIs instead of xclip, gio and xdg-open: the clipboard
+watcher reads the Win32 clipboard, *Copy file* puts the file on the clipboard the way Explorer does,
+Trash sends files to the Recycle Bin, and *Show in folder* opens Explorer with the file selected.
+The default Windows config doesn't read browser cookies: Chrome's app-bound encryption blocks that,
+and Edge locks its cookie file while it runs. Use Settings → *Site logins* instead (see
+[Sites that need a login](#sites-that-need-a-login)).
+
+To run from source on Windows, create the venv as above (use `.venv\Scripts\pip`) and run
+`.venv\Scripts\python.exe meniscus_win.py`.
+
 ## Downloading
 
 Paste one or more links into the top bar and press Absorb. Ctrl+V anywhere in the window works
@@ -77,6 +104,15 @@ package, which `requirements.txt` installs.
 
 A 401 Unauthorized error usually means you aren't logged in to that site in the browser the config
 names.
+
+You can also sign in from Meniscus itself, which is the way to do it on Windows. Settings →
+*Site logins* → *Sign in*, or the *Sign in* button under a failed download, opens a separate
+Chrome, Edge or Brave window with its own profile. Log in there and close the window. While the
+window is open, Meniscus reads its cookies over the DevTools protocol (local remote debugging on
+127.0.0.1, which only exists while that window is open) and saves them to `cookies.txt` in its
+data folder. Each download gets a copy whenever `extractor.cookies` isn't set in the config.
+*Forget* deletes the saved cookies and the sign-in profile. That file holds your sessions, so keep
+the data folder private.
 
 ## Library
 

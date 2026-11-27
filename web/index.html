@@ -181,6 +181,11 @@
       <select id="s-encode" class="chip select"></select></label>
     <label class="row stack"><span><b>Copies folder</b><small>Where share-ready copies go. Pick from here in Discord's upload dialog.</small></span>
       <input type="text" id="s-export" class="text" spellcheck="false"></label>
+    <div class="row stack s-login"><span><b>Site logins</b><small>Instagram and some other sites only download when you're logged in. Sign in once in the window that opens, then close it. Meniscus keeps the login and uses it for downloads.</small></span>
+      <div class="s-login-bar"><input type="text" id="s-login-site" class="text" value="instagram.com" spellcheck="false" aria-label="Site to sign in to">
+        <button class="act" id="s-login-go"><svg><use href="#i-open"/></svg><span>Sign in</span></button>
+        <button class="act" id="s-login-forget" hidden><svg><use href="#i-x"/></svg><span>Forget</span></button></div>
+      <small class="s-login-status" id="s-login-status" role="status"></small></div>
     <div class="s-info" id="s-info"></div>
     <div class="s-buttons">
       <button class="act" id="s-open-config"><svg><use href="#i-open"/></svg><span>gallery-dl config</span></button>

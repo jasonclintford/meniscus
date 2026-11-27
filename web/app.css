@@ -481,6 +481,12 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 .v-exports .icon-btn { width: 30px; height: 30px; }
 .v-exports .icon-btn.ok { color: var(--ok); }
 .row.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.s-login { cursor: default; }
+.s-login-bar { display: flex; gap: 8px; }
+.s-login-bar .text { flex: 1; min-width: 0; }
+.s-login-bar .act { flex: none; padding: 0 14px; }
+.s-login-status { color: var(--ink-2); font-size: 12px; }
+.vial-login { position: relative; margin-top: 6px; height: 26px; padding: 0 12px; font-size: 12px; }
 .text { height: 36px; border: 0; border-radius: 12px; padding: 0 12px; font: 12px var(--mono); background: rgb(255 255 255 / .08); box-shadow: inset 0 1px 0 rgb(255 255 255 / .15); }
 #s-encode { height: 36px; max-width: 200px; }
 .vial-note { position: relative; margin-top: 4px; font: 11px/1.4 var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
