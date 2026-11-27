@@ -2,4 +2,4 @@ gallery-dl
 yt-dlp[default,curl-cffi]
 Pillow
 # Needed on Linux to read Chrome/Chromium cookies from the system keyring
-secretstorage
+secretstorage; sys_platform == "linux"
